@@ -150,6 +150,67 @@ async def _persist_conversation(db: AsyncSession, prompt: str, response: str) ->
         raise
 
 
+@router.get("/search", response_model=ConversationListResponse)
+async def search(
+    query: str,
+    limit: int = settings.default_page_limit,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Full-text search across prompt and response using PostgreSQL FTS.
+    Uses plainto_tsquery on 'english' dictionary and ranks by ts_rank.
+    """
+    q = (query or "").strip()
+    if not q:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="query is required")
+    if limit < 1 or limit > settings.max_page_limit:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Limit must be between 1 and {settings.max_page_limit}")
+    if offset < 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Offset must be non-negative")
+
+    try:
+        # Build FTS expressions
+        tsvector = func.to_tsvector('english', func.concat(Conversation.prompt, ' ', Conversation.response))
+        tsquery = func.plainto_tsquery('english', q)
+        condition = tsvector.op('@@')(tsquery)
+        rank_expr = func.ts_rank(tsvector, tsquery)
+
+        # Total count
+        count_stmt = select(func.count(Conversation.id)).where(condition)
+        total = (await db.execute(count_stmt)).scalar() or 0
+
+        # Fetch items ordered by rank desc, newest tie-breaker
+        stmt = (
+            select(Conversation)
+            .where(condition)
+            .order_by(rank_expr.desc(), Conversation.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await db.execute(stmt)
+        items = result.scalars().all()
+
+        return ConversationListResponse(
+            conversations=[
+                ConversationResponse(
+                    id=str(conv.id),
+                    prompt=conv.prompt,
+                    response=conv.response,
+                    created_at=conv.created_at,
+                )
+                for conv in items
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Search error: {str(e)}")
+
+
+
 @router.post("/stream")
 async def stream(request: StreamRequest, db: AsyncSession = Depends(get_db), stream_format: str = "text"):
     """Stream LLM response chunk-by-chunk and persist full/partial result.

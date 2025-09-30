@@ -90,6 +90,30 @@ async def test_stream_and_history_flow():
                 unpatch()
 
 
+
+@pytest.mark.asyncio
+async def test_search_endpoint():
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # Check DB connectivity
+        h = await client.get("/health")
+        db_status = h.json().get("database")
+        if db_status != "connected":
+            pytest.skip("DB not connected; skipping search test")
+
+        # Seed a conversation via /stream to ensure searchable content
+        prompt = "searchable term foobar"
+        r = await client.post("/stream", json={"prompt": prompt})
+        assert r.status_code == 200
+
+        # Search
+        r = await client.get("/search", params={"query": "foobar", "limit": 10, "offset": 0})
+        assert r.status_code == 200
+        body = r.json()
+        assert "conversations" in body and isinstance(body["conversations"], list)
+        assert body["total"] >= 1
+        assert any("foobar" in (c.get("prompt", "") + c.get("response", "")) for c in body["conversations"])
+
 @pytest.mark.asyncio
 async def test_auth_middleware():
     from app.config import get_settings
