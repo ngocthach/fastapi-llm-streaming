@@ -1,0 +1,38 @@
+version: "3.9"
+services:
+  app:
+    build: .
+    container_name: llm-streaming-app
+    env_file:
+      - .env
+    environment:
+      # Prefer DATABASE_URL if present in .env; else use parts
+      - DATABASE_URL=${DATABASE_URL}
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LLM_MODEL=${LLM_MODEL}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS}
+      - DEBUG=${DEBUG}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+  db:
+    image: postgres:15
+    container_name: llm-streaming-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-llm_streaming}
+    ports:
+      - "5444:5432"
+    volumes:
+      - llm-streaming-db-data:/var/lib/postgresql/data
+volumes:
+  llm-streaming-db-data:
+    name: llm-streaming-db-data
