@@ -21,9 +21,9 @@ class Settings(BaseSettings):
 
     # LLM Provider settings
     openai_api_key: str = ""
-    llm_model: str = "gpt-3.5-turbo"
-    llm_temperature: float = 0.7
-    llm_max_tokens: int = 1000
+    llm_model: str = "gpt-4.1-mini"
+    llm_temperature: float = 0.25
+    llm_max_tokens: int = 2000
 
     # Application settings
     app_name: str = "LLM Streaming Service"

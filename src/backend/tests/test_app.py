@@ -32,9 +32,6 @@ async def reset_rate_store():
     yield
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_health_ok():
     transport = httpx.ASGITransport(app=app)

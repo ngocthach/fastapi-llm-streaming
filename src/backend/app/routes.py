@@ -1,9 +1,10 @@
 """API routes"""
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from typing import AsyncGenerator
 from datetime import datetime
-from typing import Optional
 import uuid
 
 from app.database import get_db
@@ -14,6 +15,7 @@ from app.schemas import (
     ConversationListResponse,
     HealthResponse,
 )
+from app.llm import get_llm_streamer
 from app.config import get_settings
 
 router = APIRouter()
@@ -135,12 +137,6 @@ async def get_conversation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         )
-
-
-
-from fastapi.responses import StreamingResponse
-from typing import AsyncGenerator
-from app.llm import get_llm_streamer
 
 
 async def _persist_conversation(db: AsyncSession, prompt: str, response: str) -> None:
