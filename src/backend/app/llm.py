@@ -1,6 +1,8 @@
 """LLM service abstraction with mock and OpenAI streaming implementations"""
 import asyncio
-from typing import AsyncGenerator
+import json
+
+from typing import AsyncGenerator, Literal
 
 from app.config import get_settings
 
@@ -13,23 +15,29 @@ except Exception:  # pragma: no cover
 settings = get_settings()
 
 
-async def mock_stream_response(prompt: str) -> AsyncGenerator[str, None]:
+async def mock_stream_response(prompt: str, stream_format: Literal["text", "openai"] = "text") -> AsyncGenerator[str, None]:
     """Mock streaming generator yielding chunks for a given prompt.
-    This simulates an LLM streaming response.
+    If stream_format == "openai", yields minimal OpenAI-like JSON lines.
     """
     text = f"Echo: {prompt}\nThis is a simulated streaming response."
     for token in text.split():
         await asyncio.sleep(0.05)
-        yield token + " "
+        if stream_format == "openai":
+            yield json.dumps({
+                "choices": [{"delta": {"content": token + " "}}]
+            })
+        else:
+            yield token + " "
 
 
-async def openai_stream_response(prompt: str) -> AsyncGenerator[str, None]:
+async def openai_stream_response(prompt: str, stream_format: Literal["text", "openai"] = "text") -> AsyncGenerator[str, None]:
     """Stream response from OpenAI Chat Completions API (async) with light retries.
     Only retries the initial stream creation; not mid-stream chunks.
+    If stream_format == "openai", yields minimal OpenAI-like JSON lines per chunk.
     """
     if AsyncOpenAI is None or not settings.openai_api_key:
         # Fallback to mock if SDK not available or API key missing
-        async for chunk in mock_stream_response(prompt):
+        async for chunk in mock_stream_response(prompt, stream_format=stream_format):
             yield chunk
         return
 
@@ -58,15 +66,30 @@ async def openai_stream_response(prompt: str) -> AsyncGenerator[str, None]:
         try:
             delta = event.choices[0].delta
             content = getattr(delta, "content", None)
-            if content:
+            if not content:
+                continue
+            if stream_format == "openai":
+                yield json.dumps({
+                    "choices": [{"delta": {"content": content}}]
+                })
+            else:
                 yield content
         except Exception:
             # If structure changes, ignore and continue
             continue
 
 
-def get_llm_streamer():
-    """Return the appropriate streaming function based on configuration."""
+def get_llm_streamer(stream_format: Literal["text", "openai"] = "text"):
+    """Return a streaming function for the configured provider with the given format.
+    The returned function will accept only (prompt: str).
+    """
     if settings.openai_api_key and AsyncOpenAI is not None:
-        return openai_stream_response
-    return mock_stream_response
+        async def _streamer(prompt: str):
+            async for ch in openai_stream_response(prompt, stream_format=stream_format):
+                yield ch
+        return _streamer
+
+    async def _mock_streamer(prompt: str):
+        async for ch in mock_stream_response(prompt, stream_format=stream_format):
+            yield ch
+    return _mock_streamer

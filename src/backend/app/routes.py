@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import AsyncGenerator
+import json
 from datetime import datetime
 import uuid
 
@@ -150,16 +151,31 @@ async def _persist_conversation(db: AsyncSession, prompt: str, response: str) ->
 
 
 @router.post("/stream")
-async def stream(request: StreamRequest, db: AsyncSession = Depends(get_db)):
-    """Stream LLM response chunk-by-chunk and persist full/partial result"""
+async def stream(request: StreamRequest, db: AsyncSession = Depends(get_db), stream_format: str = "text"):
+    """Stream LLM response chunk-by-chunk and persist full/partial result.
+    stream_format: "text" (default) or "openai" for minimal OpenAI-like JSON lines.
+    """
     prompt = request.prompt.strip()
+    if stream_format not in ("text", "openai"):
+        stream_format = "text"
 
     async def event_stream() -> AsyncGenerator[str, None]:
         full_text = ""
         try:
-            streamer = get_llm_streamer()
+            streamer = get_llm_streamer(stream_format=stream_format)
             async for chunk in streamer(prompt):
-                full_text += chunk
+                if stream_format == "openai":
+                    # Accumulate text from JSON chunk
+                    try:
+                        obj = json.loads(chunk)
+                        delta = obj.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content")
+                        if content:
+                            full_text += content
+                    except Exception:
+                        pass
+                else:
+                    full_text += chunk
                 yield chunk
         except Exception as e:
             # Persist partial response then re-raise
@@ -171,4 +187,5 @@ async def stream(request: StreamRequest, db: AsyncSession = Depends(get_db)):
             # Persist full response
             await _persist_conversation(db, prompt, full_text)
 
-    return StreamingResponse(event_stream(), media_type="text/plain")
+    media = "application/json" if stream_format == "openai" else "text/plain"
+    return StreamingResponse(event_stream(), media_type=media)
